@@ -1,0 +1,80 @@
+from AlgorithmImports import *
+import numpy as np
+from datetime import datetime
+
+class PairsTradingAlgorithm(QCAlgorithm):
+    def Initialize(self):
+        # 60 day rolling window
+        self.window_size = 60
+
+        # Set start and end dates for backtest
+        start_date = datetime(2000, 1, 1)
+        end_date = datetime(2010, 1, 1)
+        self.set_start_date(start_date)
+        self.set_end_date(end_date)
+        self.set_cash(100000)
+
+        # I am just saying KO and PEP because it is what I did when I wrote it but the ticker can be anything
+        self.koca_cola = self.add_equity("KO", Resolution.MINUTE, leverage=1).Symbol
+        self.pepsi = self.add_equity("PEP", Resolution.MINUTE, leverage=1).Symbol
+        
+
+        # Track prices and the spread between the two stocks
+        self.spread = RollingWindow[float](self.window_size)
+        self.mean = 0.0
+        self.std_dev = 0.0
+
+        # Rolling windows for prices of each stock
+        self.price_history_ko = RollingWindow[float](self.window_size)
+        self.price_history_pep = RollingWindow[float](self.window_size)
+
+    def OnData(self, data):
+
+
+        # Skip if data is missing for either stock
+        if not data.Bars.ContainsKey(self.koca_cola) or not data.Bars.ContainsKey(self.pepsi):
+            return
+
+
+        # Get the current closing prices of both stocks
+        price_ko = data.Bars[self.koca_cola].Close
+        price_pep = data.Bars[self.pepsi].Close
+
+        # Update the rolling windows with the new prices
+        self.price_history_ko.Add(price_ko)
+        self.price_history_pep.Add(price_pep)
+
+        # Ensure we have enough data to calculate the spread
+        if self.price_history_ko.Count < self.window_size or self.price_history_pep.Count < self.window_size:
+            return
+
+        # Calculate the spread between KO and PEP
+        spread = float(price_ko - price_pep)
+        self.spread.Add(spread)
+
+        # Calculate the rolling mean and standard deviation of the spread
+        self.mean = float(np.mean([s for s in self.spread]))
+        self.std_dev = float(np.std([s for s in self.spread]))
+
+        # Ensure we have a non-zero standard deviation for trading logic
+        if self.std_dev == 0:
+            return
+
+        # you can change 4 to desired 
+        # Determine the entry condition (when spread deviates above 4 standard deviations)
+        if spread > self.mean + 4 * self.std_dev:
+            if not self.portfolio[self.koca_cola].invested and not self.portfolio[self.pepsi].invested:
+                # Short Coca-Cola (KO), Long Pepsi (PEP)
+                self.set_holdings(self.koca_cola, -0.3)  # Short KO
+                self.set_holdings(self.pepsi, 0.3)      # Long PEP
+        elif spread < self.mean -4*self.std_dev: 
+            if not self.portfolio[self.koca_cola].invested and not self.portfolio[self.pepsi].invested:
+                self.set_holdings(self.koca_cola, .3)
+                self.set_holdings(self.pepsi, -.3)
+
+    # liquidate when below you can change 1 to desired or 0
+        elif spread <= self.mean+1*self.std_dev and spread >= self.mean-1*self.std_dev:
+            if self.portfolio[self.koca_cola].invested and self.portfolio[self.pepsi].invested:
+                # Liquidate positions
+                self.liquidate(self.koca_cola)
+                self.liquidate(self.pepsi)
